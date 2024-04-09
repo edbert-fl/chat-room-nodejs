@@ -4,7 +4,9 @@ const http = require("http");
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: 'https://chat-room-henna.vercel.app'
+}));
 app.use(express.json());
 
 const { initializeRoutes } = require("./routes");
