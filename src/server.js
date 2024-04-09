@@ -4,9 +4,18 @@ const http = require("http");
 
 const app = express();
 
+const allowedOrigins = ['https://chat-room-henna.vercel.app', 'http://localhost:3000'];
+
 app.use(cors({
-  origin: 'https://chat-room-henna.vercel.app'
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
 }));
+
 app.use(express.json());
 
 const { initializeRoutes } = require("./routes");

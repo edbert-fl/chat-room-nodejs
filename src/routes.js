@@ -74,8 +74,8 @@ module.exports.initializeRoutes = (app) => {
       });
 
       if (existingUser) {
-        devlog(`Username or email already in use.`);
-        return res.status(400).json({ error: 'Username or email already in use' });
+        devlog(`User already exists`);
+        return res.status(400).json({ message: 'User already exists' });
       }
 
       // Create new user
