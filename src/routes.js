@@ -1,128 +1,107 @@
-const { pool } = require("./database");
-const { devlog } = require("./helpers");
-const { SHA256 } = require("crypto-js")
+const { PrismaClient } = require('@prisma/client');
+const { devlog } = require('./helpers');
+const { SHA256, enc } = require('crypto-js')
 
 module.exports.initializeRoutes = (app) => {
-  app.get("/api", function (req, res, next) {
-    res.json({ msg: "This is CORS-enabled for all origins!" });
+  const prisma = new PrismaClient();
+
+  app.get('/api', function (req, res, next) {
+    res.json({ msg: 'This is CORS-enabled for all origins!' });
   });
 
   /* 
   Login to a user account
   */
-  app.post("/user/login", async function (req, res) {
+  app.post('/user/login', async function (req, res) {
     const { username, password } = req.body;
-    let client;
 
     try {
       devlog(`Logging into ${username}'s account`);
-      devlog(`Connecting to database...`);
-      client = await pool.connect();
 
-      // Retrieve hashed password and salt from the database for the specified email
-      const userResult = await client.query(
-        "SELECT * FROM users WHERE username = $1",
-        [username]
-      );
-      devlog(`\n\$Information retrieved successfully`);
-      const userResultData = userResult.rows[0];
+      // Retrieve user by username
+      const user = await prisma.user.findUnique({
+        where: {
+          username: username,
+        },
+      });
 
-      devlog(`${username}'s data : userResultData`)
-
-      if (userResult.rows.length === 1) {
-        const storedHashedPassword = userResultData.hashed_password;
-        const salt = userResultData.salt;
-
-        // Use the retrieved salt to hash the user's typed password
-        devlog(`Hashing input password`)
-        const hashedInputPassword = crypto.SHA256(password + salt);
-
-        // Compare the typed password and the stored hash password from the database
-        devlog(`Comparing input password and stored hashed password`)
-        if (hashedInputPassword === storedHashedPassword) {
-          devlog(`Authentication successful!`)
-          const responseData = {
-            id: userResultData.user_id,
-            name: userResultData.username,
-            email: userResultData.email,
-            salt: userResultData.salt,
-            created_at: userResultData.created_at
-          };
-          res.status(200).json({
-            user: responseData,
-            message: "Authentication successful!",
-          });
-        } else {
-          devlog(`Passwords are not the same`)
-          res.status(401).json({ message: "Passwords are not the same" });
-        }
-      } else {
-        res.status(404).json({ message: "User not found"});
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
       }
+
+      // Compare hashed password with input password
+      const hashedInputPassword = SHA256(password + user.salt);
+      const hashedPasswordString = hashedInputPassword.toString(enc.Base64);
+      if (hashedPasswordString !== user.hashed_password) {
+        devlog(`Invalid password`);
+        return res.status(401).json({ message: 'Invalid password' });
+      }
+
+      devlog(`Authentication successful!`);
+      const responseData = {
+        id: user.user_id,
+        username: user.username,
+        email: user.email,
+        created_at: user.created_at,
+      };
+      res.status(200).json({
+        user: responseData,
+        message: 'Authentication successful!',
+      });
     } catch (error) {
-      console.error("Error during login", error);
-      res
-        .status(500)
-        .json({ message: "Internal Server Error", details: error.message });
-    } finally {
-      if (client) {
-        client.release();
-      }
+      console.error('Error during login', error);
+      res.status(500).json({ message: 'Internal Server Error', details: error.message });
     }
   });
 
   /* 
   Register a new user
   */
-  app.post("/user/register", async function (req, res) {
-    const { username, email, hashedPassword, salt } = req.body;
-    let client;
+  app.post('/user/register', async function (req, res) {
+    const { username, email, salt, hashedPassword } = req.body;
 
     try {
-      devlog(`\n\nRegistering new account`);
-      devlog(`Connecting to database...`);
-      client = await pool.connect();
+      devlog(`Registering new account`);
 
-      devlog(`Checking if username or email already in use`);
-      const existingUser = await client.query(
-        "SELECT * FROM users WHERE username = $1 OR email = $2",
-        [username, email]
-      );
-      
-      if (existingUser.rows.length > 0) {
+      // Check if username or email already in use
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { username: username },
+            { email: email },
+          ],
+        },
+      });
+
+      if (existingUser) {
         devlog(`Username or email already in use.`);
-        return res.status(400).json({ error: "Username or email already in use" });
+        return res.status(400).json({ error: 'Username or email already in use' });
       }
-      devlog(`Check complete. Both username and email are both unique`);
 
-      devlog(`Creating new user`);
-      const result = await client.query(
-        "INSERT INTO users (username, email, hashed_password, salt) VALUES ($1, $2, $3, $4) RETURNING *",
-        [username, email, hashedPassword, salt]
-      );
-      const userResultData = result.rows[0]
+      // Create new user
+      const newUser = await prisma.user.create({
+        data: {
+          username: username,
+          email: email,
+          hashed_password: hashedPassword,
+          salt: salt,
+        },
+      });
 
       devlog(`User added successfully, returning result.`);
       const responseData = {
-        id: userResultData.user_id,
-        name: userResultData.username,
-        email: userResultData.email,
-        salt: userResultData.salt,
-        created_at: userResultData.created_at
+        id: newUser.user_id,
+        username: newUser.username,
+        email: newUser.email,
+        created_at: newUser.created_at,
       };
       res.status(200).json({
         user: responseData,
-        message: "User added successfully!",
+        message: 'User added successfully!',
       });
     } catch (error) {
       devlog(`ERROR\t${error.message}`);
-      res
-        .status(500)
-        .json({ message: "Internal Server Error", details: error.message });
-    } finally {
-      if (client) {
-        client.release();
-      }
+      res.status(500).json({ message: 'Internal Server Error', details: error.message });
     }
   });
 };

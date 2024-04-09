@@ -8,10 +8,8 @@ app.use(cors());
 app.use(express.json());
 
 const { initializeRoutes } = require("./routes");
-const { initializeDatabase } = require("./database");
 
 initializeRoutes(app);
-initializeDatabase();
 
 const PORT = process.env.PORT;
 
