@@ -9,10 +9,52 @@ datasource db {
 }
  
 model User {
-  user_id           Int       @id @default(autoincrement())
-  username          String    @unique
-  email             String    @unique
-  hashed_password   String
-  salt              String
-  created_at        DateTime  @default(now())
+  user_id                   Int       @id @default(autoincrement())
+  username                  String    @unique
+  email                     String    @unique
+  hashed_password           String
+  salt                      String
+  created_at                DateTime  @default(now())
+
+  sent_friend_requests      FriendRequest[] @relation("sentFriendRequests")
+  received_friend_requests  FriendRequest[] @relation("receivedFriendRequests")
+  sent_messages             Message[]       @relation("sentMessages")
+  received_messages         Message[]       @relation("receivedMessages")
+
+  user1Friends              Friend[] @relation("User1Friends")
+  user2Friends              Friend[] @relation("User2Friends")
+}
+
+model FriendRequest {
+  id                        Int      @id @default(autoincrement())
+  sender                    User     @relation("sentFriendRequests", fields: [sender_id], references: [user_id])
+  sender_id                 Int
+  receiver                  User     @relation("receivedFriendRequests", fields: [receiver_id], references: [user_id])
+  receiver_id               Int
+  accepted                  Boolean  @default(false)
+
+  created_at                DateTime @default(now())
+
+  @@index([sender_id, receiver_id])
+}
+
+model Message {
+  id                        Int      @id @default(autoincrement())
+  sender                    User     @relation("sentMessages", fields: [sender_id], references: [user_id])
+  sender_id                 Int
+  receiver                  User     @relation("receivedMessages", fields: [receiver_id], references: [user_id])
+  receiver_id               Int
+  message                   String
+  sent_at                   DateTime @default(now())
+
+  @@index([sender_id, receiver_id])
+}
+
+model Friend {
+  user1                     User @relation("User1Friends", fields: [user1Id], references: [user_id])
+  user1Id                   Int
+  user2                     User @relation("User2Friends", fields: [user2Id], references: [user_id])
+  user2Id                   Int
+
+  @@id([user1Id, user2Id])
 }
