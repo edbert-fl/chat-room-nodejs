@@ -1,7 +1,10 @@
 const { PrismaClient } = require("@prisma/client");
 const { devlog } = require("./helpers");
-const { SHA256, enc } = require("crypto-js");
+const CryptoJS = require("crypto-js");
 const WebSocket = require("ws");
+const jwt = require('jsonwebtoken');
+const authMiddleware = require("./authMiddleware");
+const validator = require('validator');
 
 module.exports.initializeRoutes = (app) => {
   const prisma = new PrismaClient();
@@ -24,8 +27,14 @@ module.exports.initializeRoutes = (app) => {
         ) {
           const formattedMessage = {
             id: parsedMessage.id,
-            sender: { ...parsedMessage.sender, id: parsedMessage.sender.user_id },
-            receiver: { ...parsedMessage.receiver, id: parsedMessage.receiver.user_id },
+            sender: {
+              ...parsedMessage.sender,
+              id: parsedMessage.sender.user_id,
+            },
+            receiver: {
+              ...parsedMessage.receiver,
+              id: parsedMessage.receiver.user_id,
+            },
             message: parsedMessage.message,
             sentAt: parsedMessage.sent_at,
           };
@@ -44,14 +53,16 @@ module.exports.initializeRoutes = (app) => {
   */
   app.post("/user/login", async function (req, res) {
     const { username, password } = req.body;
+    const validatedUsername = validator.escape(username)
+    const validatedPassword = validator.escape(password)
 
     try {
-      devlog(`Logging into ${username}'s account`);
+      devlog(`Logging into ${validatedUsername}'s account`);
 
       // Retrieve user by username
       const user = await prisma.user.findUnique({
         where: {
-          username: username,
+          username: validatedUsername,
         },
       });
 
@@ -60,8 +71,10 @@ module.exports.initializeRoutes = (app) => {
       }
 
       // Compare hashed password with input password
-      const hashedInputPassword = SHA256(password + user.salt);
-      const hashedPasswordString = hashedInputPassword.toString(enc.Base64);
+      const hashedInputPassword = CryptoJS.SHA256(validatedPassword + user.salt);
+      const hashedPasswordString = hashedInputPassword.toString(
+        CryptoJS.enc.Base64
+      );
       if (hashedPasswordString !== user.hashed_password) {
         devlog(`Invalid password`);
         return res.status(401).json({ error: "Invalid password" });
@@ -74,9 +87,21 @@ module.exports.initializeRoutes = (app) => {
         email: user.email,
         createdAt: user.created_at,
       };
+
+      const jwtToken = jwt.sign(
+        {
+          id: user.user_id,
+          email: user.email,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        process.env.SECRET,
+        { expiresIn: "1h" }
+      );
+
       res.status(200).json({
         user: responseData,
         message: "Authentication successful!",
+        token: jwtToken,
       });
     } catch (error) {
       console.error("Error during login", error);
@@ -91,6 +116,12 @@ module.exports.initializeRoutes = (app) => {
   */
   app.post("/user/register", async function (req, res) {
     const { username, email, salt, hashedPassword } = req.body;
+    const validatedUsername = validator.escape(username);
+    const validatedEmail = validator.escape(email);
+
+    if (!validator.isEmail(validatedEmail)) {
+      res.status(400).json({ success: false, error: 'Invalid email address' });
+    } 
 
     try {
       devlog(`Registering new account`);
@@ -98,7 +129,7 @@ module.exports.initializeRoutes = (app) => {
       // Check if username or email already in use
       const existingUser = await prisma.user.findFirst({
         where: {
-          OR: [{ username: username }, { email: email }],
+          OR: [{ username: validatedUsername }, { email: validatedEmail }],
         },
       });
 
@@ -110,8 +141,8 @@ module.exports.initializeRoutes = (app) => {
       // Create new user
       const newUser = await prisma.user.create({
         data: {
-          username: username,
-          email: email,
+          username: validatedUsername,
+          email: validatedEmail,
           hashed_password: hashedPassword,
           salt: salt,
         },
@@ -124,9 +155,21 @@ module.exports.initializeRoutes = (app) => {
         email: newUser.email,
         createdAt: newUser.created_at,
       };
+
+      const jwtToken = jwt.sign(
+        {
+          id: newUser.user_id,
+          email: newUser.email,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        process.env.SECRET,
+        { expiresIn: "1h" }
+      );
+
       res.status(200).json({
         user: responseData,
         message: "User added successfully!",
+        token: jwtToken,
       });
     } catch (error) {
       devlog(`ERROR\t${error.message}`);
@@ -139,7 +182,7 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Get all of a user's friends
   */
-  app.post("/user/get/friends", async function (req, res) {
+  app.post("/user/get/friends", authMiddleware, async function (req, res) {
     const { userId } = req.body;
 
     try {
@@ -166,7 +209,7 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Get all of a user's friend requests
   */
-  app.post("/user/get/friend-requests", async function (req, res) {
+  app.post("/user/get/friend-requests", authMiddleware, async function (req, res) {
     const { userID } = req.body;
 
     try {
@@ -177,11 +220,11 @@ module.exports.initializeRoutes = (app) => {
         },
       });
 
-      devlog(friendRequests)
+      devlog(friendRequests);
 
       const formattedFriendRequests = friendRequests.map((friendRequest) => ({
         id: friendRequest.id,
-        sender: {...friendRequest.sender, id: friendRequest.sender_id},
+        sender: { ...friendRequest.sender, id: friendRequest.sender_id },
         receiverID: friendRequest.receiver_id,
         accepted: friendRequest.accepted,
         createdAt: friendRequest.created_at,
@@ -202,8 +245,9 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Send a friend request
   */
-  app.post("/friend/add", async function (req, res) {
+  app.post("/friend/add", authMiddleware, async function (req, res) {
     const { sender_id, friend_name } = req.body;
+    const validatedFriend = validator.escape(friend_name);
 
     try {
       const sender = await prisma.user.findUnique({
@@ -213,17 +257,17 @@ module.exports.initializeRoutes = (app) => {
       if (!sender) {
         return res
           .status(404)
-          .json({ success: false, error: "Sender not found." });
+          .json({ success: false, error: "Request sent from invalid account." });
       }
 
       const receiver = await prisma.user.findUnique({
-        where: { username: friend_name },
+        where: { username: validatedFriend },
       });
 
       if (!receiver) {
         return res
           .status(404)
-          .json({ success: false, error: "Receiver not found." });
+          .json({ success: false, error: "User not found." });
       }
 
       // Create the friend request
@@ -248,7 +292,7 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Accept a friend request
   */
-  app.post("/friend/accept", async function (req, res) {
+  app.post("/friend/accept", authMiddleware, async function (req, res) {
     const { request_id } = req.body;
 
     try {
@@ -299,7 +343,7 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Reject a friend request
   */
-  app.post("/friend/reject", async function (req, res) {
+  app.post("/friend/reject", authMiddleware, async function (req, res) {
     const { request_id } = req.body;
 
     try {
@@ -334,8 +378,8 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Send a message
   */
-  app.post("/message/send", async function (req, res) {
-    const { sender_id, receiver_id, message, sentBySystem } = req.body;
+  app.post("/message/send", authMiddleware, async function (req, res) {
+    const { sender_id, receiver_id, message } = req.body;
 
     try {
       // Save message to the database
@@ -374,7 +418,7 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Get messages
   */
-  app.post("/message/get", async function (req, res) {
+  app.post("/message/get", authMiddleware, async function (req, res) {
     const { user_id, friend_id } = req.body;
     try {
       const messages = await prisma.message.findMany({
