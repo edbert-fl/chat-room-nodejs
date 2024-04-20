@@ -20,6 +20,7 @@ model User {
   received_friend_requests  FriendRequest[] @relation("receivedFriendRequests")
   sent_messages             Message[]       @relation("sentMessages")
   received_messages         Message[]       @relation("receivedMessages")
+  encrypted_messages        Message[]       @relation("encryptedMessages")
 
   user1Friends              Friend[] @relation("User1Friends")
   user2Friends              Friend[] @relation("User2Friends")
@@ -46,6 +47,10 @@ model Message {
   receiver_id               Int
   message                   String
   sent_at                   DateTime @default(now())
+  encrypted_by              User?    @relation("encryptedMessages", fields: [encrypted_by_id], references: [user_id])
+  encrypted_by_id           Int?
+  iv                        String
+  hmac                      String
 
   @@index([sender_id, receiver_id])
 }

@@ -2,47 +2,19 @@ const { PrismaClient } = require("@prisma/client");
 const { devlog } = require("./helpers");
 const CryptoJS = require("crypto-js");
 const WebSocket = require("ws");
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 const authMiddleware = require("./authMiddleware");
-const validator = require('validator');
+const validator = require("validator");
 
 module.exports.initializeRoutes = (app) => {
   const prisma = new PrismaClient();
 
-  // WebSocket server
-  const wss = new WebSocket.Server({ port: process.env.WEBSOCKET_PORT });
-
   // Handle WebSocket connections
-  wss.on("connection", function connection(ws, req) {
-    ws.id = parseInt(req.url.split("=")[1]);
-    ws.on("message", function incoming(message) {
-      const messageString = message.toString();
-      const parsedMessage = JSON.parse(messageString);
+  const WebSocketServer = require("./websocket");
 
-      devlog(`Client with id ${ws.id} recevied message`);
-      wss.clients.forEach(function each(client) {
-        if (
-          client.id === parsedMessage.receiver.id &&
-          client.readyState === WebSocket.OPEN
-        ) {
-          const formattedMessage = {
-            id: parsedMessage.id,
-            sender: {
-              ...parsedMessage.sender,
-              id: parsedMessage.sender.user_id,
-            },
-            receiver: {
-              ...parsedMessage.receiver,
-              id: parsedMessage.receiver.user_id,
-            },
-            message: parsedMessage.message,
-            sentAt: parsedMessage.sent_at,
-          };
-          client.send(JSON.stringify(formattedMessage));
-        }
-      });
-    });
-  });
+  const WEBSOCKET_PORT = process.env.WEBSOCKET_PORT || 8080;
+  const wss = new WebSocketServer({ port: WEBSOCKET_PORT });
+
 
   app.get("/api", function (req, res, next) {
     res.json({ msg: "This is CORS-enabled for all origins!" });
@@ -53,8 +25,8 @@ module.exports.initializeRoutes = (app) => {
   */
   app.post("/user/login", async function (req, res) {
     const { username, password } = req.body;
-    const validatedUsername = validator.escape(username)
-    const validatedPassword = validator.escape(password)
+    const validatedUsername = validator.escape(username);
+    const validatedPassword = validator.escape(password);
 
     try {
       devlog(`Logging into ${validatedUsername}'s account`);
@@ -71,7 +43,9 @@ module.exports.initializeRoutes = (app) => {
       }
 
       // Compare hashed password with input password
-      const hashedInputPassword = CryptoJS.SHA256(validatedPassword + user.salt);
+      const hashedInputPassword = CryptoJS.SHA256(
+        validatedPassword + user.salt
+      );
       const hashedPasswordString = hashedInputPassword.toString(
         CryptoJS.enc.Base64
       );
@@ -86,6 +60,7 @@ module.exports.initializeRoutes = (app) => {
         username: user.username,
         email: user.email,
         createdAt: user.created_at,
+        salt: user.salt
       };
 
       const jwtToken = jwt.sign(
@@ -120,8 +95,8 @@ module.exports.initializeRoutes = (app) => {
     const validatedEmail = validator.escape(email);
 
     if (!validator.isEmail(validatedEmail)) {
-      res.status(400).json({ success: false, error: 'Invalid email address' });
-    } 
+      res.status(400).json({ success: false, error: "Invalid email address" });
+    }
 
     try {
       devlog(`Registering new account`);
@@ -209,38 +184,42 @@ module.exports.initializeRoutes = (app) => {
   /* 
   Get all of a user's friend requests
   */
-  app.post("/user/get/friend-requests", authMiddleware, async function (req, res) {
-    const { userID } = req.body;
+  app.post(
+    "/user/get/friend-requests",
+    authMiddleware,
+    async function (req, res) {
+      const { userID } = req.body;
 
-    try {
-      const friendRequests = await prisma.friendRequest.findMany({
-        where: { receiver_id: userID },
-        include: {
-          sender: true,
-        },
-      });
+      try {
+        const friendRequests = await prisma.friendRequest.findMany({
+          where: { receiver_id: userID },
+          include: {
+            sender: true,
+          },
+        });
 
-      devlog(friendRequests);
+        devlog(friendRequests);
 
-      const formattedFriendRequests = friendRequests.map((friendRequest) => ({
-        id: friendRequest.id,
-        sender: { ...friendRequest.sender, id: friendRequest.sender_id },
-        receiverID: friendRequest.receiver_id,
-        accepted: friendRequest.accepted,
-        createdAt: friendRequest.created_at,
-      }));
+        const formattedFriendRequests = friendRequests.map((friendRequest) => ({
+          id: friendRequest.id,
+          sender: { ...friendRequest.sender, id: friendRequest.sender_id },
+          receiverID: friendRequest.receiver_id,
+          accepted: friendRequest.accepted,
+          createdAt: friendRequest.created_at,
+        }));
 
-      devlog(formattedFriendRequests);
+        devlog(formattedFriendRequests);
 
-      res.json({ success: true, friendRequests: formattedFriendRequests });
-    } catch (error) {
-      console.error("Error fetching user's friend requests:", error);
-      res.status(500).json({
-        success: false,
-        error: "Failed to fetch user's friend requests",
-      });
+        res.json({ success: true, friendRequests: formattedFriendRequests });
+      } catch (error) {
+        console.error("Error fetching user's friend requests:", error);
+        res.status(500).json({
+          success: false,
+          error: "Failed to fetch user's friend requests",
+        });
+      }
     }
-  });
+  );
 
   /* 
   Send a friend request
@@ -255,9 +234,10 @@ module.exports.initializeRoutes = (app) => {
       });
 
       if (!sender) {
-        return res
-          .status(404)
-          .json({ success: false, error: "Request sent from invalid account." });
+        return res.status(404).json({
+          success: false,
+          error: "Request sent from invalid account.",
+        });
       }
 
       const receiver = await prisma.user.findUnique({
@@ -379,15 +359,18 @@ module.exports.initializeRoutes = (app) => {
   Send a message
   */
   app.post("/message/send", authMiddleware, async function (req, res) {
-    const { sender_id, receiver_id, message } = req.body;
+    const { sender_id, receiver_id, message, iv, hmac } = req.body;
 
     try {
       // Save message to the database
       const savedMessage = await prisma.message.create({
         data: {
+          encrypted_by_id: sender_id,
           sender_id,
           receiver_id,
           message,
+          iv,
+          hmac
         },
         include: {
           sender: true,
@@ -415,6 +398,48 @@ module.exports.initializeRoutes = (app) => {
     }
   });
 
+  app.post("/message/store", authMiddleware, async function (req, res) {
+    const { storer_id, sender_id, receiver_id, message, iv, hmac } = req.body;
+
+    try {
+      // Save message to the database
+      const savedMessage = await prisma.message.create({
+        data: {
+          encrypted_by_id: storer_id,
+          sender_id,
+          receiver_id,
+          message,
+          iv,
+          hmac
+        },
+        include: {
+          sender: true,
+          receiver: true,
+        },
+      });
+
+      const transformedMessage = {
+        ...savedMessage,
+        sender: {
+          ...savedMessage.sender,
+          id: savedMessage.sender.user_id,
+        },
+        receiver: {
+          ...savedMessage.receiver,
+          id: savedMessage.receiver.user_id,
+        },
+        sentAt: savedMessage.sent_at,
+      };
+
+      res.status(200).json({ success: true, message: transformedMessage });
+    } catch (error) {
+      console.error("Error sending message:", error);
+      res.status(500).json({ success: false, error: "Error sending message." });
+    }
+  });
+
+
+
   /* 
   Get messages
   */
@@ -423,6 +448,7 @@ module.exports.initializeRoutes = (app) => {
     try {
       const messages = await prisma.message.findMany({
         where: {
+          encrypted_by_id: user_id,
           OR: [
             {
               sender_id: user_id,
@@ -448,6 +474,8 @@ module.exports.initializeRoutes = (app) => {
         sender: { ...message.sender, id: message.sender.user_id },
         receiver: { ...message.receiver, id: message.receiver.user_id },
         message: message.message,
+        iv: message.iv,
+        hmac: message.hmac,
         sentAt: message.sent_at,
       }));
 

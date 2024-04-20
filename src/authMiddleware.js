@@ -13,7 +13,12 @@ function authMiddleware(req, res, next) {
       userID != decoded.id ||
       email != decoded.email
     ) {
-      return res.status(401).json({ message: "Unauthorized" });
+      console.log("LOGS", {
+        decoded,
+        userID,
+        email
+      })
+      return res.status(401).json({ message: "Unauthorized token" });
     } else {
       req.user = decoded;
       next();
