@@ -4,9 +4,12 @@ const { format } = require("crypto-js");
 
 const WS_STATUS = {
   MESSAGE_TRANSFER: 1,
-  REQUEST_TO_SEND_PUBLIC_KEY: 2,
-  ACCEPTED_REQUEST_FOR_PUBLIC_KEY: 3,
-  REQUEST_TO_DELETE_PUBLIC_KEY: 4,
+  GROUP_MESSAGE_TRANSFER: 2,
+  CHECK_ONLINE: 3,
+  PACKET_DISCONNECT: 4,
+  COMMENT_TRANSFER: 5,
+  MUTED: 6,
+  UNMUTED: 7
 };
 
 class WebSocketServer {
@@ -24,6 +27,7 @@ class WebSocketServer {
   handleMessage(ws, message) {
     try {
       const parsedMessage = JSON.parse(message);
+      console.log(parsedMessage);
       if (parsedMessage.type === WS_STATUS.MESSAGE_TRANSFER) {
         this.wss.clients.forEach(function each(client) {
           if (
@@ -31,8 +35,6 @@ class WebSocketServer {
             client.readyState === WebSocket.OPEN
           ) {
             devlog(`Client with id ${ws.id} received message`);
-
-            devlog(parsedMessage);
             const formattedMessage = {
               type: WS_STATUS.MESSAGE_TRANSFER,
               data: {
@@ -47,36 +49,101 @@ class WebSocketServer {
                 },
                 message: parsedMessage.data.message,
                 sentAt: parsedMessage.data.sentAt,
-                hmac: parsedMessage.data.hmac,
-                hmacKey: parsedMessage.data.hmacKey,
               },
             };
             client.send(JSON.stringify(formattedMessage));
           }
         });
-      } else {
-        if (parsedMessage.type === WS_STATUS.REQUEST_TO_SEND_PUBLIC_KEY) {
-          devlog(
-            `${parsedMessage.data.senderID} has sent a request for ${parsedMessage.data.receiverID}'s public key.`
+      } else if (parsedMessage.type === WS_STATUS.GROUP_MESSAGE_TRANSFER) {
+        const formattedMessage = {
+          type: WS_STATUS.GROUP_MESSAGE_TRANSFER,
+          data: {
+            id: parsedMessage.data.id,
+            sender: {
+              ...parsedMessage.data.sender,
+              id: parsedMessage.data.sender.user_id,
+            },
+            receiver: null,
+            message: parsedMessage.data.message,
+            sentAt: parsedMessage.data.sentAt,
+          },
+        };
+        this.wss.clients.forEach(function each(client) {
+          parsedMessage.receivers.some((receiver) => {
+            if (
+              receiver.userId === client.id &&
+              receiver.userId != formattedMessage.data.sender.id
+            ) {
+              client.send(JSON.stringify(formattedMessage));
+            }
+          });
+        });
+      } else if (parsedMessage.type === WS_STATUS.CHECK_ONLINE) {
+        const senderId = parsedMessage.data.sender;
+        const friends = JSON.parse(parsedMessage.data.friends);
+
+        const updatedFriends = friends.map((friend) => {
+          const isOnline = Array.from(this.wss.clients).some(
+            (client) =>
+              client.id === friend.id && client.readyState === WebSocket.OPEN
           );
-        } else if (
-          parsedMessage.type === WS_STATUS.ACCEPTED_REQUEST_FOR_PUBLIC_KEY
-        ) {
-          devlog(
-            `${parsedMessage.data.senderID} accepted request from ${parsedMessage.data.receiverID} to share public keys`
-          );
-        } else if (
-          parsedMessage.type === WS_STATUS.REQUEST_TO_DELETE_PUBLIC_KEY
-        ) {
-          devlog(
-            `${parsedMessage.data.senderID} asked ${parsedMessage.data.receiverID} to delete their public key record`
-          );
-        }
+          return { ...friend, online: isOnline };
+        });
+
+        const response = {
+          type: WS_STATUS.CHECK_ONLINE,
+          data: {
+            sender: senderId,
+            friends: updatedFriends,
+          },
+        };
+
         this.wss.clients.forEach(function each(client) {
           if (
-            client.id === parsedMessage.data.receiverID &&
+            client.id === parsedMessage.data.sender &&
             client.readyState === WebSocket.OPEN
           ) {
+            client.send(JSON.stringify(response));
+          }
+        });
+      } else if (parsedMessage.type === WS_STATUS.PACKET_DISCONNECT) {
+        const message = {
+          type: WS_STATUS.PACKET_DISCONNECT,
+          senderID: senderId,
+        };
+
+        parsedMessage.data.friends.forEach((friend) => {
+          this.wss.clients.forEach((client) => {
+            if (
+              client.userId === friend.id &&
+              client.readyState === WebSocket.OPEN
+            ) {
+              client.send(JSON.stringify(message));
+              console.log(friend.id);
+            }
+          });
+        });
+      } else if (parsedMessage.type === WS_STATUS.COMMENT_TRANSFER) {
+        this.wss.clients.forEach((client) => {
+          client.send(JSON.stringify(parsedMessage));
+        });
+      } else if (parsedMessage.type === WS_STATUS.MUTED) {
+        this.wss.clients.forEach((client) => {
+          if (
+            client.id === parsedMessage.receiverId &&
+            client.readyState === WebSocket.OPEN
+          ) {
+            console.log("Muting", parsedMessage.receiverId)
+            client.send(JSON.stringify(parsedMessage));
+          }
+        });
+      } else if (parsedMessage.type === WS_STATUS.UNMUTED) {
+        this.wss.clients.forEach((client) => {
+          if (
+            client.id === parsedMessage.receiverId &&
+            client.readyState === WebSocket.OPEN
+          ) {
+            console.log("Muting", parsedMessage.receiverId)
             client.send(JSON.stringify(parsedMessage));
           }
         });

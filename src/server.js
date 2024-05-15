@@ -1,10 +1,11 @@
 const express = require("express");
 const cors = require("cors");
-const http = require("http");
+const https = require("https");
+const fs = require("fs");
 
 const app = express();
 
-const allowedOrigins = ['https://chat-room-henna.vercel.app', 'http://localhost:3000'];
+const allowedOrigins = ['https://chat-room-henna.vercel.app', 'https://localhost:3000'];
 
 app.use(cors({
   origin: function(origin, callback) {
@@ -24,7 +25,12 @@ initializeRoutes(app);
 
 const PORT = process.env.PORT;
 
+const options = {
+  key: fs.readFileSync('.certs/info2222.chat-app-nodejs.key'),
+  cert: fs.readFileSync('.certs/info2222.chat-app-nodejs.crt')
+};
+
 // Create an HTTP server using Express app
-http.createServer(app).listen(PORT, function () {
+https.createServer(options, app).listen(PORT, function () {
   console.log(`CORS-enabled web server listening on port ${PORT}`);
 });

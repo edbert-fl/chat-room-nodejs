@@ -15,28 +15,69 @@ model User {
   hashed_password           String
   salt                      String
   created_at                DateTime  @default(now())
+  role                      Int       @default(1)
+  muted                     Boolean   @default(false)
 
   sent_friend_requests      FriendRequest[] @relation("sentFriendRequests")
   received_friend_requests  FriendRequest[] @relation("receivedFriendRequests")
   sent_messages             Message[]       @relation("sentMessages")
   received_messages         Message[]       @relation("receivedMessages")
-  encrypted_messages        Message[]       @relation("encryptedMessages")
 
-  user1Friends              Friend[] @relation("User1Friends")
-  user2Friends              Friend[] @relation("User2Friends")
+  user1Friends              Friend[]        @relation("User1Friends")
+  user2Friends              Friend[]        @relation("User2Friends")
+  articles                  Article[]
+  comments                  Comment[]
+  
+  groupsOwned               Group[]         @relation("GroupOwner")
+  groups                    GroupMember[]   @relation("UsersGroups")
+  groupMessagesSent         GroupMessage[]  @relation("GroupMessageSender")
+  groupInvitesSent          GroupInvite[]   @relation("sentGroupInvite")
+  groupInvitesReceived      GroupInvite[]   @relation("receiveGroupInvite")
+}
+
+model Article {
+  article_id                Int      @id @default(autoincrement())
+  author                    User     @relation(fields: [author_id], references: [user_id])
+  author_id                 Int
+  title                     String
+  content                   String
+  written_at                DateTime @default(now())
+  sponsored_by              String?
+
+  comments                  Comment[]
+}
+
+// Define enum for user roles
+enum UserRole {
+  STUDENT
+  ALUMNI
+  ACADEMIC_STAFF
+  ADMINISTRATIVE_STAFF
+  ADMIN
+}
+
+model Comment {
+  comment_id                Int       @id @default(autoincrement())
+  article_id                Int      
+  article                   Article   @relation(fields: [article_id], references: [article_id])
+  author_id                 Int
+  author                    User      @relation(fields: [author_id], references: [user_id])
+  content                   String
+  written_at                DateTime  @default(now())
 }
 
 model FriendRequest {
-  id                        Int      @id @default(autoincrement())
-  sender                    User     @relation("sentFriendRequests", fields: [sender_id], references: [user_id])
+  id                        Int       @id @default(autoincrement())
+  sender                    User      @relation("sentFriendRequests", fields: [sender_id], references: [user_id])
   sender_id                 Int
-  receiver                  User     @relation("receivedFriendRequests", fields: [receiver_id], references: [user_id])
+  receiver                  User      @relation("receivedFriendRequests", fields: [receiver_id], references: [user_id])
   receiver_id               Int
-  accepted                  Boolean  @default(false)
+  accepted                  Boolean   @default(false)
 
-  created_at                DateTime @default(now())
+  created_at                DateTime  @default(now())
 
   @@index([sender_id, receiver_id])
+  @@unique([sender_id, receiver_id])
 }
 
 model Message {
@@ -47,10 +88,6 @@ model Message {
   receiver_id               Int
   message                   String
   sent_at                   DateTime @default(now())
-  encrypted_by              User?    @relation("encryptedMessages", fields: [encrypted_by_id], references: [user_id])
-  encrypted_by_id           Int?
-  iv                        String
-  hmac                      String
 
   @@index([sender_id, receiver_id])
 }
@@ -62,4 +99,50 @@ model Friend {
   user2Id                   Int
 
   @@id([user1Id, user2Id])
+  @@unique([user1Id, user2Id])
+}
+
+model Group {
+  id          Int             @id @default(autoincrement())
+  name        String
+  dateCreated DateTime        @default(now())
+  groupOwner  User            @relation("GroupOwner", fields: [groupOwnerId], references: [user_id])
+  groupOwnerId Int
+  // Relations
+  members     GroupMember[]   @relation("GroupMembers")
+  invites     GroupInvite[]   @relation("GroupInvites")
+  messages    GroupMessage[]  @relation("GroupMessages")
+}
+
+model GroupMember {
+  id          Int     @id @default(autoincrement())
+  user        User    @relation("UsersGroups", fields: [userId], references: [user_id])
+  userId      Int
+  group       Group   @relation("GroupMembers", fields: [groupId], references: [id])
+  groupId     Int
+  @@unique([userId, groupId]) // Ensure a user cannot join the same group multiple times
+}
+
+model GroupMessage {
+  id          Int       @id @default(autoincrement())
+  content     String
+  sentAt      DateTime  @default(now())
+  senderId    Int
+  groupId     Int
+  // Relations
+  sender      User      @relation("GroupMessageSender", fields: [senderId], references: [user_id])
+  group       Group     @relation("GroupMessages", fields: [groupId], references: [id])
+}
+
+model GroupInvite {
+  id          Int       @id @default(autoincrement())
+  group       Group     @relation("GroupInvites", fields: [groupId], references: [id])
+  groupId     Int
+  senderId    Int
+  receiverId  Int
+  accepted    Boolean
+  createdAt   DateTime  @default(now())
+  // Relations
+  sender      User      @relation("sentGroupInvite", fields: [senderId], references: [user_id])
+  receiver    User      @relation("receiveGroupInvite", fields: [receiverId], references: [user_id])
 }
